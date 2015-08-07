@@ -6887,6 +6887,11 @@ VOS_STATUS hdd_stop_adapter( hdd_context_t *pHddCtx, hdd_adapter_t *pAdapter,
          if( hdd_connIsConnected(pstation) ||
              (pstation->conn_info.connState == eConnectionState_Connecting) )
          {
+#ifdef FEATURE_WLAN_TDLS
+              mutex_lock(&pHddCtx->tdls_lock);
+              wlan_hdd_tdls_exit(pAdapter, TRUE);
+              mutex_unlock(&pHddCtx->tdls_lock);
+#endif
             if (pWextState->roamProfile.BSSType == eCSR_BSS_TYPE_START_IBSS)
                 halStatus = sme_RoamDisconnect(pHddCtx->hHal,
                                              pAdapter->sessionId,
@@ -7186,6 +7191,11 @@ VOS_STATUS hdd_reset_all_adapters( hdd_context_t *pHddCtx )
       }
 #endif
 
+#ifdef FEATURE_WLAN_TDLS
+      mutex_lock(&pHddCtx->tdls_lock);
+      wlan_hdd_tdls_exit(pAdapter, TRUE);
+      mutex_unlock(&pHddCtx->tdls_lock);
+#endif
       status = hdd_get_next_adapter ( pHddCtx, pAdapterNode, &pNext );
       pAdapterNode = pNext;
    }
@@ -10265,10 +10275,24 @@ v_BOOL_t hdd_is_apps_power_collapse_allowed(hdd_context_t* pHddCtx)
         {
             if (((pConfig->fIsImpsEnabled || pConfig->fIsBmpsEnabled)
                  && (pmcState != IMPS && pmcState != BMPS && pmcState != UAPSD
-                  &&  pmcState != STOPPED && pmcState != STANDBY)) ||
+                  &&  pmcState != STOPPED && pmcState != STANDBY &&
+                      pmcState != WOWL)) ||
                  (eANI_BOOLEAN_TRUE == scanRspPending) ||
                  (eANI_BOOLEAN_TRUE == inMiddleOfRoaming))
             {
+                if(pmcState == FULL_POWER &&
+                   sme_IsCoexScoIndicationSet(pHddCtx->hHal))
+                {
+                    /*
+                     * When SCO indication comes from Coex module , host will
+                     * enter in to full power mode, but this should not prevent
+                     * apps processor power collapse.
+                     */
+                    hddLog(LOG1,
+                       FL("Allow apps power collapse"
+                          "even when sco indication is set"));
+                    return TRUE;
+                }
                 hddLog( LOGE, "%s: do not allow APPS power collapse-"
                     "pmcState = %d scanRspPending = %d inMiddleOfRoaming = %d",
                     __func__, pmcState, scanRspPending, inMiddleOfRoaming );
